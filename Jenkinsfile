@@ -6,48 +6,82 @@ pipeline {
         timestamps()
     }
 
+    environment {
+        IMAGE = 'manairoeya/monapp'
+        TAG = "build-${BUILD_NUMBER}"
+    }
+
     stages {
-        stage('Cloner le dépôt') {
+        stage('Checkout') {
             steps {
-                git url: 'https://github.com/OunaiesEya/jenkins-grp5.git', branch: 'master'
+                checkout scm
+                echo 'Code recupere depuis GitHub'
             }
         }
 
-        stage('Étape 1 : Vérification du dépôt') {
+        stage('Docker Build') {
             steps {
-                bat 'echo === Étape 1 : Vérification du dépôt ==='
-                bat 'git status'
+                bat 'docker version'
+                bat 'docker build -t %IMAGE%:%TAG% .'
             }
         }
 
-        stage('Étape 2 : Afficher le contenu du projet') {
+        stage('Smoke Test') {
             steps {
-                bat 'echo === Étape 2 : Afficher le contenu du projet ==='
-                bat 'dir'
+                bat '''
+                    @echo off
+                    docker rm -f monapp_test 2>NUL
+                    docker run -d --name monapp_test -p 8083:80 %IMAGE%:%TAG%
+                    if errorlevel 1 exit /b 1
+
+                    timeout /t 5 /nobreak >NUL
+
+                    curl.exe -f http://localhost:8083/ >NUL
+                    if errorlevel 1 exit /b 1
+
+                    echo Application HTTP test successful
+                '''
             }
         }
 
-        stage('Étape 3 : Simuler un déploiement local') {
+        stage('Push Docker Hub') {
             steps {
-                bat 'echo === Étape 3 : Simuler un déploiement local ==='
-                bat 'echo Le fichier index.html est prêt à être affiché'
-            }
-        }
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    bat '''
+                        @echo off
+                        echo %DOCKER_PASS%| docker login -u %DOCKER_USER% --password-stdin
+                        if errorlevel 1 exit /b 1
 
-        stage('Étape 4 : Fin du build') {
-            steps {
-                bat 'echo === Étape 4 : Fin du build ==='
-                bat 'echo SUCCESS'
+                        docker tag %IMAGE%:%TAG% %IMAGE%:latest
+
+                        docker push %IMAGE%:%TAG%
+                        if errorlevel 1 exit /b 1
+
+                        docker push %IMAGE%:latest
+                        if errorlevel 1 exit /b 1
+
+                        docker logout
+                    '''
+                }
             }
         }
     }
 
     post {
+        always {
+            bat(returnStatus: true, script: 'docker rm -f monapp_test')
+        }
         success {
-            echo 'Build OK'
+            echo 'SUCCESS: Build + Test + Push completed!'
         }
         failure {
-            echo 'Build KO'
+            echo 'FAILURE: Check Console Output.'
         }
     }
 }
