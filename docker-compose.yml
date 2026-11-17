@@ -1,0 +1,8 @@
+
+services:
+  web:
+    image: manairoeya/monapp:latest
+    container_name: monapp_compose
+    ports:
+      - "8084:80"
+    restart: unless-stopped
